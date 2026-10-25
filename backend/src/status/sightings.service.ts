@@ -1,4 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
 import { HttpCacheService } from '../common/http-cache.service';
 import { ProviderChain } from '../common/provider-chain';
 import { distanceNm } from '../common/geo';
@@ -66,6 +68,7 @@ export class SightingsService implements OnModuleInit {
 
   onModuleInit() {
     if (process.env.OPENSKY_FLIGHTS_INDEX === 'false') return;
+    this.loadIndex();
     setTimeout(() => void this.refresh(), 20_000).unref();
     setInterval(() => void this.refresh(), 20 * 60_000).unref();
   }
@@ -159,6 +162,38 @@ export class SightingsService implements OnModuleInit {
     return d && Date.now() - d.lastSeen * 1000 < KEEP_MS ? d : null;
   }
 
+  // ---------------------------------------------------------------- persistence
+  // The index covers 14 h of OpenSky data. Keeping it on disk means a restart (deploys, dev
+  // reloads) only fetches the minutes it missed, instead of re-downloading everything and
+  // burning through OpenSky's daily quota.
+
+  private indexFile() {
+    return join(process.env.CACHE_DIR ?? join(__dirname, '..', '..', '.cache'), 'opensky-departures.json');
+  }
+
+  private loadIndex() {
+    try {
+      const raw = JSON.parse(readFileSync(this.indexFile(), 'utf8')) as { coveredUntil: number; departures: DepartureRecord[] };
+      const cutoff = Date.now() / 1000 - 14 * 3600;
+      if (!raw.coveredUntil || raw.coveredUntil < cutoff) return;
+      for (const d of raw.departures) if (d.lastSeen >= cutoff) this.departures.set(d.callsign, d);
+      this.coveredUntil = raw.coveredUntil;
+      this.logger.log(`Departures index restored from disk: ${this.departures.size} flights (up to ${new Date(raw.coveredUntil * 1000).toISOString()})`);
+    } catch {
+      /* no cache yet */
+    }
+  }
+
+  private saveIndex() {
+    try {
+      const file = this.indexFile();
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify({ coveredUntil: this.coveredUntil, departures: [...this.departures.values()] }));
+    } catch (err) {
+      this.logger.warn(`Could not save departures index: ${(err as Error).message}`);
+    }
+  }
+
   // ---------------------------------------------------------------- OpenSky recent flights index
 
   private async refresh() {
@@ -173,11 +208,13 @@ export class SightingsService implements OnModuleInit {
           if (!prev || prev.lastSeen < d.lastSeen) this.departures.set(d.callsign, d);
         }
         this.coveredUntil = end;
+        this.saveIndex(); // keep progress even if a later window gets rate-limited
         begin = end;
         // Be gentle with OpenSky's anonymous rate limit between windows.
         if (begin < now - 60) await new Promise((r) => setTimeout(r, 15_000));
       }
       this.prune(false);
+      this.saveIndex();
       this.logger.log(`Departures index: ${this.departures.size} recent flights`);
     } catch (err) {
       this.logger.warn(`Departures index refresh failed (will retry): ${(err as Error).message}`);

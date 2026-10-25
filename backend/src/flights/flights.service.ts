@@ -151,6 +151,7 @@ export class FlightsService {
       { threshold: 2, cooldownMs: 60_000, maxCooldownMs: 15 * 60_000 },
     );
     this.lookupChain = new ProviderChain('lookup', [
+      ...this.reApiLookup(isEmpty),
       ...feeds.map((f) => ({
         name: f.name,
         minIntervalMs: f.minIntervalMs,
@@ -167,11 +168,14 @@ export class FlightsService {
     ], { betterMiss: (a, b) => a.length > 0 && (b.length === 0 || freshest(a) < freshest(b)) });
     this.searchChain = new ProviderChain(
       'search',
-      feeds.map((f) => ({
-        name: f.name,
-        minIntervalMs: f.minIntervalMs,
-        run: (k: LookupKind, v: string) => this.readsb(f.lookup(k, v)),
-      })),
+      // re-api and api.adsb.lol are the same network, so search re-api instead of api.adsb.lol.
+      [...this.reApiLookup(), ...feeds.filter((f) => !(BULK_URL && f.name === 'adsb.lol'))].map((f: any) =>
+        'run' in f ? f : {
+            name: f.name,
+            minIntervalMs: f.minIntervalMs,
+            run: (k: LookupKind, v: string) => this.readsb(f.lookup(k, v)),
+          },
+      ),
     );
     // Anonymous OpenSky allows ~100 global snapshots/day, so it is fetched only on demand
     // (when the community feeds miss) and cached.
@@ -199,6 +203,28 @@ export class FlightsService {
       cooldownMs: 5 * 60_000,
       maxCooldownMs: 30 * 60_000,
     });
+  }
+
+  /**
+   * adsb.lol's re-api can also find single aircraft (find_hex / find_callsign / find_reg) and has
+   * more headroom than api.adsb.lol, which rate-limits busy apps. Squawk/military queries aren't
+   * supported there, so those skip to the next provider without counting as a failure.
+   */
+  private reApiLookup(isMiss?: (r: LiveAircraft[], k: LookupKind) => boolean) {
+    if (!BULK_URL) return [];
+    const param: Partial<Record<LookupKind, string>> = { hex: 'find_hex', callsign: 'find_callsign', reg: 'find_reg' };
+    return [
+      {
+        name: 're-api.adsb.lol',
+        minIntervalMs: 1_100,
+        ...(isMiss ? { isMiss } : {}),
+        run: async (k: LookupKind, v: string) => {
+          const q = param[k];
+          if (!q) throw new Error('local skip: not supported by re-api');
+          return this.readsb(`${BULK_URL}?${q}=${encodeURIComponent(v)}`);
+        },
+      },
+    ];
   }
 
   health() {

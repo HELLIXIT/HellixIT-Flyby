@@ -118,7 +118,7 @@ export class ProviderChain<A extends unknown[], R> {
         }
         return { value: value as R & {}, source: p.name };
       } catch (err) {
-        if (!(err as Error).message.startsWith('local rate-limit')) br.failure(err as Error);
+        if (!(err as Error).message.startsWith('local ')) br.failure(err as Error);
         errors.push(`${p.name}: ${(err as Error).message}`);
         this.logger.warn(`${p.name} failed → trying next (${(err as Error).message})`);
       }
@@ -143,7 +143,7 @@ export class ProviderChain<A extends unknown[], R> {
           br.success();
           return { value, source: p.name };
         } catch (err) {
-          if (!(err as Error).message.startsWith('local rate-limit')) br.failure(err as Error);
+          if (!(err as Error).message.startsWith('local ')) br.failure(err as Error);
           this.logger.warn(`${p.name} failed (${(err as Error).message})`);
           throw err;
         }

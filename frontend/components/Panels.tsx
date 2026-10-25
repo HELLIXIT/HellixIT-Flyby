@@ -218,7 +218,7 @@ export function FiltersPanel(p: { filters: Filters; onChange: (f: Filters) => vo
 interface Health {
   status: string;
   degraded: string[];
-  providers: Record<string, { name: string; state: string; lastError: string | null }[]>;
+  providers: Record<string, { name: string; state: string; lastError: string | null; retryAt: string | null }[]>;
   airports: { count: number; source: string };
 }
 
@@ -338,15 +338,26 @@ export function SettingsPanel(p: {
         {health && (
           <ul className="providers small">
             {Object.entries(health.providers).map(([chain, list]) => (
-              <li key={chain}>
-                <span className="muted">{chain}</span>
-                <span>
-                  {list.map((pr) => (
-                    <span key={pr.name} className={`prov ${pr.state}`} title={pr.lastError ?? 'healthy'}>
-                      {pr.name}
-                    </span>
+              <li key={chain} className="prov-row">
+                <div className="prov-line">
+                  <span className="muted">{chain}</span>
+                  <span>
+                    {list.map((pr) => (
+                      <span key={pr.name} className={`prov ${pr.state}`} title={pr.lastError ?? 'healthy'}>
+                        {pr.name}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+                {list
+                  .filter((pr) => pr.state === 'open')
+                  .map((pr) => (
+                    <div key={pr.name} className="prov-why small">
+                      {pr.name}: {explainProvider(pr.lastError)}
+                      {pr.retryAt ? ` — retrying ${new Date(pr.retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}.{' '}
+                      {list.some((x) => x.state === 'up') ? 'Using the other sources meanwhile.' : ''}
+                    </div>
                   ))}
-                </span>
               </li>
             ))}
           </ul>
@@ -438,4 +449,14 @@ function VoicePicker({ settings, onChange, onTest }: { settings: Settings; onCha
       </button>
     </div>
   );
+}
+
+/** Plain-language reason for a paused data source. */
+function explainProvider(err: string | null) {
+  if (!err) return 'paused after errors';
+  if (/\b429\b|rate/i.test(err)) return 'rate-limited by the provider (daily/short-term quota)';
+  if (/\b(401|403)\b|rejected/i.test(err)) return 'access refused — check the API key/credentials';
+  if (/\b5\d\d\b/.test(err)) return 'provider is having problems';
+  if (/abort|timeout|fetch failed|ENOTFOUND|ECONN/i.test(err)) return 'not reachable right now';
+  return 'paused after errors';
 }

@@ -1521,3 +1521,17 @@ input[type='range'] {
 .voice-picker .btn {
   align-self: flex-start;
 }
+
+.prov-row {
+  display: block !important;
+}
+.prov-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.prov-why {
+  color: var(--warn);
+  margin: 2px 0 4px;
+  text-align: right;
+}
