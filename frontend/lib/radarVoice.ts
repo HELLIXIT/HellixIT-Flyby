@@ -85,8 +85,10 @@ interface Pending {
 
 const TURN_DEG = 35;
 const PER_FLIGHT_COOLDOWN_MS = 25_000;
-const MAX_QUEUE = 3;
+const MAX_QUEUE = 5;
 const STALE_MS = 20_000;
+/** Entering/leaving messages may wait longer before being dropped. */
+const STALE_IMPORTANT_MS = 60_000;
 
 /**
  * Spoken radar announcements (Web Speech API): aircraft entering the range, turning,
@@ -110,25 +112,39 @@ export function useRadarVoice(opts: {
   const [caption, setCaption] = useState<string | null>(null);
   const supported = typeof window !== 'undefined' && 'speechSynthesis' in window;
 
+  // Chrome garbage-collects utterances that nothing references, and then never fires onend —
+  // which would stall our queue after the first message. Keep a reference + a watchdog.
+  const current = useRef<SpeechSynthesisUtterance | null>(null);
+  const watchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const pump = useCallback(() => {
     if (!supported || speaking.current) return;
     const now = Date.now();
-    queue.current = queue.current.filter((p) => now - p.at < STALE_MS);
+    queue.current = queue.current.filter((p) => now - p.at < (p.priority >= 3 ? STALE_IMPORTANT_MS : STALE_MS));
     const next = queue.current.shift();
     if (!next) return;
     const u = new SpeechSynthesisUtterance(next.text);
-    const voice = window.speechSynthesis.getVoices().find((v) => /^en(-|_)/i.test(v.lang) && /natural|google|samantha|daniel|serena/i.test(v.name)) ??
-      window.speechSynthesis.getVoices().find((v) => /^en(-|_)/i.test(v.lang));
+    const voices = window.speechSynthesis.getVoices();
+    const voice =
+      voices.find((v) => /^en(-|_)/i.test(v.lang) && /natural|google|samantha|daniel|serena/i.test(v.name)) ?? voices.find((v) => /^en(-|_)/i.test(v.lang));
     if (voice) u.voice = voice;
     u.rate = 1.02;
     speaking.current = true;
+    current.current = u;
     setCaption(next.text);
+    let finished = false;
     const done = () => {
+      if (finished) return;
+      finished = true;
+      if (watchdog.current) clearTimeout(watchdog.current);
+      current.current = null;
       speaking.current = false;
       pump();
     };
     u.onend = done;
     u.onerror = done;
+    // ~80 ms per character is slow speech; if onend still hasn't fired by then, move on.
+    watchdog.current = setTimeout(done, 3_000 + next.text.length * 80);
     window.speechSynthesis.speak(u);
   }, [supported]);
 
@@ -151,6 +167,8 @@ export function useRadarVoice(opts: {
     queue.current = [];
     primed.current = false;
     if (supported) window.speechSynthesis.cancel();
+    if (watchdog.current) clearTimeout(watchdog.current);
+    current.current = null;
     speaking.current = false;
   }, [enabled, active, supported]);
 
@@ -166,6 +184,10 @@ export function useRadarVoice(opts: {
     const seen = new Set<string>();
     const first = !primed.current;
     let insideCount = 0;
+    // Events of one update are combined, so simultaneous arrivals are all announced.
+    const entering: { name: string; detail: string }[] = [];
+    const left: string[] = [];
+    const lost: string[] = [];
 
     for (const t of targets) {
       const dist = distanceNm(location.lat, location.lon, t.lat, t.lon);
@@ -193,7 +215,7 @@ export function useRadarVoice(opts: {
         if (!first) {
           const alt = sayAltitude(t.alt, units);
           const hdg = t.track !== null ? `, heading ${compassWords(t.track)}` : '';
-          say(`${name} entering radar, ${sayDistance(dist, units)} ${compassWords(brg)}${alt ? `, ${alt}` : ''}${hdg}.`, 3);
+          entering.push({ name, detail: `${sayDistance(dist, units)} ${compassWords(brg)}${alt ? `, ${alt}` : ''}${hdg}` });
           st.lastSpokeAt = now;
         }
         st.announcedTrack = t.track;
@@ -218,7 +240,7 @@ export function useRadarVoice(opts: {
           st.lastSpokeAt = now;
         } else if (dist < radiusNm * 0.7) st.leavingAnnounced = false;
       } else if (!inside && st.inside) {
-        say(`${name} has left the radar.`, 3);
+        left.push(name);
         st.lastSpokeAt = now;
         st.leavingAnnounced = false;
       }
@@ -235,10 +257,22 @@ export function useRadarVoice(opts: {
       if (++st.missing < 2) continue; // one missed update is usually just a data hiccup
       if (st.inside && !first) {
         const name = sayCallsign(st.label);
-        say(st.lastDist > radiusNm * 0.8 ? `${name} has left the radar.` : `${name}, signal lost.`, 2);
+        if (st.lastDist > radiusNm * 0.8) left.push(name);
+        else lost.push(name);
       }
       state.current.delete(hex);
     }
+
+    const list = (names: string[]) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+    if (entering.length === 1) say(`${entering[0].name} entering radar, ${entering[0].detail}.`, 3);
+    else if (entering.length <= 3 && entering.length > 1)
+      say(`${entering.length} aircraft entering radar: ${entering.map((e) => `${e.name}, ${e.detail}`).join('; and ')}.`, 3);
+    else if (entering.length > 3)
+      say(`${entering.length} aircraft entering radar, including ${list(entering.slice(0, 3).map((e) => e.name))}.`, 3);
+    if (left.length === 1) say(`${left[0]} has left the radar.`, 3);
+    else if (left.length > 1) say(`${left.length} aircraft left the radar: ${list(left.slice(0, 4))}${left.length > 4 ? ' and others' : ''}.`, 3);
+    if (lost.length === 1) say(`${lost[0]}, signal lost.`, 2);
+    else if (lost.length > 1) say(`Signal lost for ${list(lost.slice(0, 4))}${lost.length > 4 ? ' and others' : ''}.`, 2);
 
     if (first) {
       primed.current = true;
