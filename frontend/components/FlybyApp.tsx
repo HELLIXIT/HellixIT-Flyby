@@ -119,6 +119,37 @@ function statusFromEstimate(e: EstimatedAircraft): FlightStatus | null {
   };
 }
 
+/**
+ * A starred flight that no free network hears, placed at FlightAware's latest real position
+ * (only while airborne and if that position is recent). Rendered like a normal live aircraft.
+ */
+function aircraftFromStatus(hex: string, callsign: string, st: FlightStatus | null | undefined): Aircraft | null {
+  const p = st?.phase === 'airborne' ? st.lastPosition : null;
+  if (!p) return null;
+  const age = (Date.now() - Date.parse(p.at)) / 1000;
+  if (!Number.isFinite(age) || age > 20 * 60) return null;
+  return {
+    hex,
+    callsign,
+    reg: st?.registration ?? null,
+    type: st?.aircraftType ?? null,
+    desc: null,
+    lat: p.lat,
+    lon: p.lon,
+    alt: p.alt,
+    onGround: false,
+    gs: p.gs,
+    track: p.heading,
+    vrate: null,
+    squawk: null,
+    emergency: null,
+    category: 'A3',
+    military: false,
+    seen: Math.max(0, age),
+    source: 'flightaware',
+  };
+}
+
 function notify(title: string, body: string) {
   try {
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
@@ -477,9 +508,10 @@ export default function FlybyApp() {
             continue;
           }
           if (!found) {
-            setWatchLive((m) => ({ ...m, [w.hex]: null }));
-            // Keeps the server's schedule/estimate fresh, so the flight shows on the estimated layer.
-            void api.status(w.hex.slice(3)).catch(() => undefined);
+            // Not heard by any free network: use FlightAware's real position if it has one
+            // (this also keeps the server's schedule/estimate fresh for the estimated layer).
+            const st = (await api.status(w.hex.slice(3)).catch(() => null))?.status;
+            setWatchLive((m) => ({ ...m, [w.hex]: aircraftFromStatus(w.hex, w.hex.slice(3), st) }));
             continue;
           }
           const f = found;
@@ -496,6 +528,8 @@ export default function FlybyApp() {
         try {
           a = (await api.flight(w.hex)).aircraft;
           if (a) a = merger.current.one(a);
+          // Not heard by the free networks? Track it via FlightAware's real position instead.
+          if (!a && w.callsign) a = aircraftFromStatus(w.hex, w.callsign, (await api.status(w.callsign).catch(() => null))?.status);
         } catch {
           continue; // network hiccup — don't emit false "lost signal" events
         }
@@ -835,18 +869,27 @@ export default function FlybyApp() {
     for (const a of area.aircraft) if (passesFilters(a, filters) || a.hex === selectedHex || watchedSet.has(a.hex)) map.set(a.hex, a);
     if (showMilitary && military) for (const a of military) if (!map.has(a.hex)) map.set(a.hex, a);
     if (selected && !map.has(selected.hex)) map.set(selected.hex, selected);
+    // Starred flights are always on the map — wherever they are, even via FlightAware.
+    const cs = new Set([...map.values()].map((a) => a.callsign).filter(Boolean));
+    for (const w of watchlist) {
+      const a = watchLive[w.hex];
+      if (a && !map.has(a.hex) && !(a.callsign && cs.has(a.callsign))) map.set(a.hex, a);
+    }
     return [...map.values()];
-  }, [area.aircraft, filters, selectedHex, watchedSet, showMilitary, military, selected]);
+  }, [area.aircraft, filters, selectedHex, watchedSet, showMilitary, military, selected, watchlist, watchLive]);
 
   // Never show an estimate for a plane we can currently hear (or the one open in the estimate panel).
   const shownEstimated = useMemo(() => {
     if (!settings.showEstimated) return [];
     const live = new Set(area.aircraft.map((a) => a.hex));
     for (const a of displayed) live.add(a.hex);
-    const liveCs = new Set(area.aircraft.map((a) => a.callsign).filter(Boolean));
+    const liveCs = new Set([...area.aircraft, ...displayed].map((a) => a.callsign).filter(Boolean));
     return estimatedList.filter((e) => {
       if (live.has(e.hex) || liveCs.has(e.callsign)) return false;
-      if (panel === 'estimated' && known?.callsign === e.callsign) return false;
+      // Same flight can be named by ICAO callsign (AIC2276) or flight number (AI2276).
+      const names = [e.callsign, e.flightNumber].filter(Boolean) as string[];
+      if (panel === 'estimated' && known && names.some((n) => n === known.callsign || n === known.flightNumber)) return false;
+      if (names.some((n) => liveCs.has(n))) return false;
       const alt = e.alt ?? 0;
       if (alt < filters.minAlt || (filters.maxAlt < 50000 && alt > filters.maxAlt)) return false;
       if (!filters.kinds.airliner) return false;
@@ -943,7 +986,17 @@ export default function FlybyApp() {
         userLocation={userLoc}
         overheadRadiusNm={panel === 'overhead' ? overheadRadius : null}
         initialView={view}
-        onSelect={(hex) => selectFlight(hex, hex ? displayed.find((a) => a.hex === hex) : null)}
+        onSelect={(hex) => {
+          if (hex?.startsWith('cs:')) {
+            // A starred flight known only by callsign: open its schedule/position view.
+            api
+              .search(hex.slice(3))
+              .then((r) => r.knownFlight && showKnown(r.knownFlight))
+              .catch(() => undefined);
+            return;
+          }
+          selectFlight(hex, hex ? displayed.find((a) => a.hex === hex) : null);
+        }}
         onAirport={openAirport}
         onBounds={setBounds}
       />

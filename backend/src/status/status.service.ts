@@ -34,7 +34,9 @@ export interface GroundFlight {
 /** Area searches (airborne flights FlightAware places in a box) for receiver-less areas. */
 const AREA_CAP = Number(process.env.AEROAPI_AREA_CALLS_PER_DAY ?? 24);
 /** Live position lookups for flights opened in the estimated-flight panel. */
-const POSITION_CAP = Number(process.env.AEROAPI_POSITION_CALLS_PER_DAY ?? 60);
+const POSITION_CAP = Number(process.env.AEROAPI_POSITION_CALLS_PER_DAY ?? 200);
+/** How long a FlightAware position is reused (starred flights refresh at most this often). */
+const POSITION_REFRESH_MS = Number(process.env.AEROAPI_POSITION_REFRESH_SEC ?? 120) * 1000;
 const AREA_REFRESH_MS = Number(process.env.AEROAPI_AREA_REFRESH_MIN ?? 10) * 60_000;
 
 /** A flight FlightAware positions inside a searched area. */
@@ -306,7 +308,7 @@ export class StatusService {
     try {
       return await this.http.cached(
         `fa-pos:${faFlightId}`,
-        90_000,
+        POSITION_REFRESH_MS,
         async () => {
           const today = new Date().toISOString().slice(0, 10);
           if (today !== this.posDay) {

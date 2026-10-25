@@ -71,13 +71,15 @@ export function WatchlistPanel(p: {
                 <span className="over-main">
                   <b className="mono">{w.label}</b>
                   <span className="muted small">
-                    {w.hex.startsWith('cs:')
+                    {a
+                      ? `${PHASE_EMOJI[phase!]} ${PHASE_LABEL[phase!]} · ${fmtAlt(a.alt, p.units, a.onGround)} · ${fmtSpeed(a.gs, p.units)}${
+                          a.source === 'flightaware' ? ' · via FlightAware' : ''
+                        }`
+                      : w.hex.startsWith('cs:')
                       ? `📡 Waiting for signal${w.routeLabel ? ` · ${w.routeLabel}` : ''} — not in receiver coverage yet`
                       : a === undefined
-                      ? 'Checking…'
-                      : a === null
-                        ? 'Not transmitting (landed or out of range)'
-                        : `${PHASE_EMOJI[phase!]} ${PHASE_LABEL[phase!]} · ${fmtAlt(a.alt, p.units, a.onGround)} · ${fmtSpeed(a.gs, p.units)}`}
+                        ? 'Checking…'
+                        : 'Not transmitting (landed or out of range)'}
                   </span>
                 </span>
               </button>

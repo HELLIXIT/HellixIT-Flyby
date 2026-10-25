@@ -51,7 +51,7 @@ export default function EstimatedPanel({ flight, estimate, statusEnabled, watche
           <>
             📡 <b>Live via FlightAware.</b> The free networks can’t hear this aircraft, but FlightAware’s receivers can — position by{' '}
             {UPDATE_TYPE[estimate.updateType]}, {estimate.ageSec! < 60 ? `${estimate.ageSec}s` : `${Math.round(estimate.ageSec! / 60)} min`} ago (refreshed about every
-            90 s).
+            2 min).
           </>
         ) : (
           <>

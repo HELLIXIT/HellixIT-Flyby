@@ -316,7 +316,7 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref) {
           () => {
             const d = tracked.data;
             const u = propsRef.current.units;
-            return `<b>${d.callsign ?? d.reg ?? d.hex.toUpperCase()}</b> ${d.type ?? ''}<br/>${fmtAlt(d.alt, u, d.onGround)} · ${fmtSpeed(d.gs, u)}`;
+            return `<b>${d.callsign ?? d.reg ?? d.hex.toUpperCase()}</b> ${d.type ?? ''}<br/>${fmtAlt(d.alt, u, d.onGround)} · ${fmtSpeed(d.gs, u)}${d.source === 'flightaware' ? '<br/><i>via FlightAware</i>' : ''}`;
           },
           { direction: 'top', offset: [0, -10], className: 'ac-tip' },
         );
