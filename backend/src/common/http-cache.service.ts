@@ -92,6 +92,11 @@ export class HttpCacheService {
     return hit && hit.expires > Date.now() ? hit.value : undefined;
   }
 
+  /** Drop a cached entry so the next call reloads it. */
+  invalidate(key: string) {
+    this.cache.delete(key);
+  }
+
   async cached<T>(
     key: string,
     ttlMs: number,

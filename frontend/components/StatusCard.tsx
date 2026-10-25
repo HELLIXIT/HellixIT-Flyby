@@ -30,7 +30,7 @@ function diffMin(shown: string | null | undefined, scheduled: string | null | un
 
 /** Departure/arrival times, delays and gates from the schedule source (FlightAware). */
 export default function StatusCard({ s, compact = false }: { s: FlightStatus; compact?: boolean }) {
-  const [icon, label] = PHASE[s.phase];
+  const [icon, label] = s.landing && s.phase === 'airborne' ? ['🛬', 'Landing'] : PHASE[s.phase];
   const t = s.times;
   const est = s.source === 'estimate';
   const depTz = s.origin?.timezone;

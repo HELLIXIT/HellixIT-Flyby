@@ -44,7 +44,7 @@ interface Props {
   onAirport: (code: string) => void;
   onBounds: (b: ViewBounds) => void;
   /** Estimated position of a flight no receiver can hear (drawn as a dashed "ghost" plane). */
-  ghost: { lat: number; lon: number; track: number; label: string; live?: boolean; origin: [number, number]; destination: [number, number] } | null;
+  ghost: { lat: number; lon: number; track: number; label: string; live?: boolean; hidePlane?: boolean; origin: [number, number]; destination: [number, number] } | null;
   /** Estimated positions of flights out of receiver coverage (dashed outline icons). */
   estimated: EstimatedAircraft[];
   onEstimated: (e: EstimatedAircraft) => void;
@@ -463,6 +463,7 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref) {
     L.polyline(greatCircle(g.origin, here, 48), { color: '#94a3b8', weight: 2, opacity: 0.45 }).addTo(gl);
     L.polyline(greatCircle(here, g.destination, 64), { color: '#f59e0b', weight: 2, opacity: 0.8, dashArray: '6 8' }).addTo(gl);
     for (const pt of [g.origin, g.destination]) L.circleMarker(pt, { radius: 6, color: '#fff', weight: 2, fillColor: '#f59e0b', fillOpacity: 1 }).addTo(gl);
+    if (g.hidePlane) return;
     L.marker(here, {
       icon: L.divIcon({
         className: 'ac-icon',

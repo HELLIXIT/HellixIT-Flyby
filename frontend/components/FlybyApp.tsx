@@ -139,7 +139,8 @@ function aircraftFromStatus(hex: string, callsign: string, st: FlightStatus | nu
     alt: p.alt,
     onGround: false,
     gs: p.gs,
-    track: p.heading,
+    // On final approach, don't extrapolate along the heading (it would overshoot the runway).
+    track: st?.landing || (p.alt !== null && p.alt < 3000) ? null : p.heading,
     vrate: null,
     squawk: null,
     emergency: null,
@@ -878,6 +879,10 @@ export default function FlybyApp() {
     return [...map.values()];
   }, [area.aircraft, filters, selectedHex, watchedSet, showMilitary, military, selected, watchlist, watchLive]);
 
+  // Same aircraft already drawn (e.g. starred and tracked live)? Then the panel shows only its route.
+  const ghostHidePlane = !!known && displayed.some((a) => a.callsign === known.callsign || a.callsign === known.flightNumber);
+  const ghostForMap = useMemo(() => (ghost ? { ...ghost, hidePlane: ghostHidePlane } : null), [ghost, ghostHidePlane]);
+
   // Never show an estimate for a plane we can currently hear (or the one open in the estimate panel).
   const shownEstimated = useMemo(() => {
     if (!settings.showEstimated) return [];
@@ -979,7 +984,7 @@ export default function FlybyApp() {
         showAirports={settings.showAirports}
         mapStyle={settings.mapStyle}
         cartoKey={cartoKey}
-        ghost={ghost}
+        ghost={ghostForMap}
         estimated={shownEstimated}
         onEstimated={openEstimated}
         units={settings.units}

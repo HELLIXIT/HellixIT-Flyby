@@ -309,7 +309,10 @@ export function estimatePosition(s: FlightStatus | null | undefined, origin: Air
   const lp = s.lastPosition;
   const age = lp ? now - Date.parse(lp.at) : Infinity;
   if (lp && age < 15 * 60_000) {
-    const [lat, lon] = lp.heading !== null && lp.gs ? project(lp.lat, lp.lon, lp.heading, (lp.gs * Math.min(age, 10 * 60_000)) / 3_600_000) : [lp.lat, lp.lon];
+    // On final approach planes turn and slow down — don't push them past the runway.
+    const hold = s.landing || (lp.alt !== null && lp.alt < 3000);
+    const [lat, lon] =
+      !hold && lp.heading !== null && lp.gs ? project(lp.lat, lp.lon, lp.heading, (lp.gs * Math.min(age, 10 * 60_000)) / 3_600_000) : [lp.lat, lp.lon];
     const flown = distanceNm(origin.lat, origin.lon, lat, lon);
     const left = distanceNm(lat, lon, dest.lat, dest.lon);
     const speed = Math.max(140, lp.gs ?? 400);
@@ -319,7 +322,7 @@ export function estimatePosition(s: FlightStatus | null | undefined, origin: Air
       track: lp.heading ?? bearing(lat, lon, dest.lat, dest.lon),
       fraction: Math.min(1, flown / (flown + left || 1)),
       // Close to the airport, aircraft fly approach patterns longer than the straight line.
-      minutesToGo: (left / speed) * 60 + (left < 40 ? 4 : 8),
+      minutesToGo: s.landing ? Math.max(1, (left / speed) * 60) : (left / speed) * 60 + (left < 40 ? 4 : 8),
       basis: 'position',
       updateType: lp.updateType,
       ageSec: Math.round(age / 1000),

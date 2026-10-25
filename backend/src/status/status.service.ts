@@ -113,6 +113,8 @@ export interface FlightStatus {
     actualIn: string | null;
   };
   fetchedAt: string;
+  /** Airborne but on final approach (from the live position): show as "Landing". */
+  landing?: boolean;
   /** FlightAware's internal flight id (needed for position lookups). */
   faFlightId?: string | null;
   /** FlightAware's latest position for this flight (their receivers/satellite/projection). */
@@ -172,7 +174,7 @@ export class StatusService {
     let fa = await this.flightAware(cs);
     if (fa?.phase === 'airborne' && fa.faFlightId) {
       const pos = await this.position(fa.faFlightId);
-      if (pos) fa = { ...fa, lastPosition: pos };
+      if (pos) fa = inferLanding({ ...fa, lastPosition: pos }, route?.destination ?? null);
     }
     const result = fa ?? (route ? this.estimate(cs, route) : null);
     this.remember(cs, result, route ?? null);
@@ -293,7 +295,17 @@ export class StatusService {
     if (!this.key) return null;
     try {
       // 5 min for flights that are moving, longer otherwise; stale answers kept for 6 h if FA is unreachable.
-      return await this.http.cached(`fa:${cs}`, 5 * 60_000, () => this.chain.run(cs), 6 * 3600_000);
+      // Close to arrival a flight's status changes quickly (landing, gate): refresh at least
+      // every minute then, instead of the usual 5 minutes.
+      const key = `fa:${cs}`;
+      const hit = this.http.peek<FlightStatus | null>(key);
+      if (hit?.phase === 'airborne') {
+        const t = hit.times;
+        const arr = Date.parse(t.estimatedOn ?? t.scheduledOn ?? t.estimatedIn ?? '');
+        const age = Date.now() - Date.parse(hit.fetchedAt);
+        if (Number.isFinite(arr) && arr - Date.now() < 25 * 60_000 && age > 60_000) this.http.invalidate(key);
+      }
+      return await this.http.cached(key, 5 * 60_000, () => this.chain.run(cs), 6 * 3600_000);
     } catch (err) {
       this.logger.warn(`status ${cs}: ${(err as Error).message}`);
       return null;
@@ -683,4 +695,27 @@ function toPosition(p: any): FlightStatus['lastPosition'] {
     at: p.timestamp ?? new Date().toISOString(),
     updateType: p.update_type ?? null,
   };
+}
+
+/**
+ * FlightAware marks "landed" a little after touchdown, but the live position tells us sooner:
+ * low and close to the destination = landing; on the ground there = landed.
+ */
+function inferLanding(st: FlightStatus, dest: { lat: number; lon: number; elevation?: number | null } | null): FlightStatus {
+  const p = st.lastPosition;
+  if (!p || !dest) return st;
+  const nm = distanceNm(p.lat, p.lon, dest.lat, dest.lon);
+  const agl = p.alt === null ? null : p.alt - (dest.elevation ?? 0);
+  const onGround = p.updateType === 'X' || (agl !== null && agl < 200 && (p.gs ?? 0) < 80);
+  if (onGround && nm < 5) {
+    return {
+      ...st,
+      phase: 'landed',
+      landing: false,
+      status: 'Landed',
+      times: { ...st.times, actualOn: st.times.actualOn ?? p.at },
+    };
+  }
+  if (agl !== null && agl < 3000 && nm < 15) return { ...st, landing: true, status: 'Landing' };
+  return st;
 }
