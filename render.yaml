@@ -1,0 +1,36 @@
+# Render Blueprint — Dashboard → New → Blueprint → select this repo.
+# One web service runs both the Next.js web app (public $PORT) and the NestJS API
+# (internal port 4000) via scripts/run.mjs.
+services:
+  - type: web
+    name: flyby
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    # Passes only when both the web server and the API respond.
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Optional CARTO basemap key — Render will prompt for it (leave blank to use Esri tiles).
+      - key: CARTO_API_KEY
+        sync: false
+      # Optional free OpenSky account (higher quota than anonymous access).
+      - key: OPENSKY_CLIENT_ID
+        sync: false
+      - key: OPENSKY_CLIENT_SECRET
+        sync: false
+      # Optional FlightAware AeroAPI key: schedules, delays, gates and estimated positions
+      # for flights out of receiver coverage. Leave blank to disable.
+      - key: FLIGHTAWARE_AEROAPI_KEY
+        sync: false
+      - key: AEROAPI_MAX_CALLS_PER_DAY
+        value: "30"
+      # Set to "true" only after airplanes.live has approved your usage.
+      - key: AIRPLANES_LIVE_ENABLED
+        value: "false"
+      - key: LIVE_CACHE_MS
+        value: "5000"
