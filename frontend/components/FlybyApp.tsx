@@ -639,6 +639,7 @@ export default function FlybyApp() {
             lon: estimate.lon,
             track: estimate.track,
             label: known.flightNumber,
+            live: estimate.basis === 'position' && !!estimate.updateType && 'AMZSX'.includes(estimate.updateType),
             origin: [known.route.origin.lat, known.route.origin.lon] as [number, number],
             destination: [known.route.destination.lat, known.route.destination.lon] as [number, number],
           }

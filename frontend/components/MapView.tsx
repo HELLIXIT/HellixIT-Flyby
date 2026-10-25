@@ -44,7 +44,7 @@ interface Props {
   onAirport: (code: string) => void;
   onBounds: (b: ViewBounds) => void;
   /** Estimated position of a flight no receiver can hear (drawn as a dashed "ghost" plane). */
-  ghost: { lat: number; lon: number; track: number; label: string; origin: [number, number]; destination: [number, number] } | null;
+  ghost: { lat: number; lon: number; track: number; label: string; live?: boolean; origin: [number, number]; destination: [number, number] } | null;
   /** Estimated positions of flights out of receiver coverage (dashed outline icons). */
   estimated: EstimatedAircraft[];
   onEstimated: (e: EstimatedAircraft) => void;
@@ -466,13 +466,13 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref) {
     L.marker(here, {
       icon: L.divIcon({
         className: 'ac-icon',
-        html: `<div class="ac ac-ghost" style="--sz:28px"><svg class="ac-rot" viewBox="0 0 24 24" width="28" height="28" style="transform:rotate(${g.track}deg)"><path d="${SHAPES.jet}" fill="rgba(245,158,11,0.25)" stroke="#f59e0b" stroke-width="1" stroke-dasharray="2 1.5"/></svg><span class="ac-label">${g.label} · est.</span></div>`,
+        html: `<div class="ac ac-ghost" style="--sz:28px"><svg class="ac-rot" viewBox="0 0 24 24" width="28" height="28" style="transform:rotate(${g.track}deg)"><path d="${SHAPES.jet}" fill="rgba(245,158,11,0.25)" stroke="#f59e0b" stroke-width="1" stroke-dasharray="2 1.5"/></svg><span class="ac-label">${g.label} · ${g.live ? 'live via FA' : 'est.'}</span></div>`,
         iconSize: [28, 28],
         iconAnchor: [14, 14],
       }),
       zIndexOffset: 2500,
     })
-      .bindTooltip(`<b>${g.label}</b> — estimated position<br/>No live signal; based on schedule`, { direction: 'top', offset: [0, -10], className: 'ac-tip' })
+      .bindTooltip(g.live ? `<b>${g.label}</b> — live position from FlightAware<br/>The free networks can't hear it` : `<b>${g.label}</b> — estimated position<br/>No live signal`, { direction: 'top', offset: [0, -10], className: 'ac-tip' })
       .addTo(gl);
   }, [props.ghost]);
 

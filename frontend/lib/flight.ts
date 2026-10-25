@@ -292,21 +292,57 @@ export interface EstimatedPosition {
   track: number;
   fraction: number;
   minutesToGo: number;
+  /** 'position' = from FlightAware's latest real position; 'schedule' = interpolated by time. */
+  basis: 'position' | 'schedule';
+  /** For 'position': how FlightAware got it and how old it is. */
+  updateType?: string | null;
+  ageSec?: number;
 }
 
 /**
- * Where an airborne flight should be right now, from its takeoff time and estimated landing
- * time, assuming it follows the great circle. Mirrors what big trackers show over oceans.
+ * Where an airborne flight is right now. Prefers FlightAware's latest real position (moved
+ * forward along its heading for the seconds since); otherwise interpolates along the route
+ * between take-off and landing times — what big trackers do when nobody hears the aircraft.
  */
 export function estimatePosition(s: FlightStatus | null | undefined, origin: Airport | null, dest: Airport | null, now = Date.now()): EstimatedPosition | null {
   if (!s || !origin || !dest || s.phase !== 'airborne') return null;
+  const lp = s.lastPosition;
+  const age = lp ? now - Date.parse(lp.at) : Infinity;
+  if (lp && age < 15 * 60_000) {
+    const [lat, lon] = lp.heading !== null && lp.gs ? project(lp.lat, lp.lon, lp.heading, (lp.gs * Math.min(age, 10 * 60_000)) / 3_600_000) : [lp.lat, lp.lon];
+    const flown = distanceNm(origin.lat, origin.lon, lat, lon);
+    const left = distanceNm(lat, lon, dest.lat, dest.lon);
+    const speed = Math.max(140, lp.gs ?? 400);
+    return {
+      lat,
+      lon,
+      track: lp.heading ?? bearing(lat, lon, dest.lat, dest.lon),
+      fraction: Math.min(1, flown / (flown + left || 1)),
+      // Close to the airport, aircraft fly approach patterns longer than the straight line.
+      minutesToGo: (left / speed) * 60 + (left < 40 ? 4 : 8),
+      basis: 'position',
+      updateType: lp.updateType,
+      ageSec: Math.round(age / 1000),
+    };
+  }
   const dep = Date.parse(s.times.actualOff ?? s.times.actualOut ?? s.times.estimatedOff ?? '');
   const arr = Date.parse(s.times.estimatedOn ?? s.times.scheduledOn ?? s.times.estimatedIn ?? s.times.scheduledIn ?? '');
   if (!Number.isFinite(dep) || !Number.isFinite(arr) || arr <= dep) return null;
   const fraction = Math.min(0.995, Math.max(0.005, (now - dep) / (arr - dep)));
   const [lat, lon] = pointAlong([origin.lat, origin.lon], [dest.lat, dest.lon], fraction);
-  return { lat, lon, track: bearing(lat, lon, dest.lat, dest.lon), fraction, minutesToGo: Math.max(0, (arr - now) / 60_000) };
+  return { lat, lon, track: bearing(lat, lon, dest.lat, dest.lon), fraction, minutesToGo: Math.max(0, (arr - now) / 60_000), basis: 'schedule' };
 }
+
+export const UPDATE_TYPE: Record<string, string> = {
+  A: 'ADS-B',
+  M: 'multilateration',
+  Z: 'radar',
+  S: 'satellite',
+  O: 'oceanic position report',
+  D: 'datalink',
+  X: 'surface',
+  P: 'projection',
+};
 
 /** Clock time in an airport's own timezone, e.g. "19:40". */
 export function fmtLocal(iso: string | null | undefined, timeZone?: string | null) {

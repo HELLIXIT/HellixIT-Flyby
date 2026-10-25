@@ -170,6 +170,9 @@ export interface FlightStatus {
     string | null
   >;
   fetchedAt: string;
+  faFlightId?: string | null;
+  /** FlightAware's latest real position (A=ADS-B, M=MLAT, Z=radar, S=satellite, P=projected…). */
+  lastPosition?: { lat: number; lon: number; alt: number | null; gs: number | null; heading: number | null; at: string; updateType: string | null } | null;
 }
 
 export interface KnownFlight {

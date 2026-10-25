@@ -1402,6 +1402,9 @@ input[type='range'] {
 .delay.good {
   color: var(--good);
 }
+.delay.mild {
+  color: #fbbf24;
+}
 .delay.warn {
   color: var(--warn);
 }

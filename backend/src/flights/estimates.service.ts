@@ -179,44 +179,7 @@ export class EstimatesService {
       const est = this.fromDeparture(d.callsign, d.hex, d.firstSeen * 1000, d.lastSeen * 1000, route, now);
       if (est && inside(est.lat, est.lon, b)) out.push(est);
     }
-    // Third source: airborne flights whose schedule/status was looked up (search, panels, watch list).
-    for (const k of this.status.knownAirborne()) {
-      if (out.some((e) => e.callsign === k.callsign)) continue;
-      const heard = this.sightings.sighting(k.callsign);
-      if (heard && now - heard.at < MIN_SILENT_MS) continue; // live right now
-      const t = k.status.times;
-      const dep = Date.parse(t.actualOff ?? t.actualOut ?? t.estimatedOff ?? t.scheduledOff ?? '');
-      const arr = Date.parse(t.estimatedOn ?? t.scheduledOn ?? t.estimatedIn ?? t.scheduledIn ?? '');
-      const o = k.route.origin!;
-      const d = k.route.destination!;
-      if (!Number.isFinite(dep) || !Number.isFinite(arr) || arr <= dep || now < dep || now >= arr) continue;
-      const f = (now - dep) / (arr - dep);
-      const [lat, lon] = along(o.lat, o.lon, d.lat, d.lon, f);
-      if (!inside(lat, lon, b)) continue;
-      const total = distanceNm(o.lat, o.lon, d.lat, d.lon);
-      const left = total * (1 - f);
-      out.push({
-        hex: k.status.hex ?? heard?.hex ?? `cs-${k.callsign}`,
-        callsign: k.callsign,
-        reg: k.status.registration ?? heard?.reg ?? null,
-        type: k.status.aircraftType ?? heard?.type ?? null,
-        lat,
-        lon,
-        alt: left < 120 ? Math.round(Math.max(3_000, left * 300) / 100) * 100 : heard?.alt ?? 35_000,
-        gs: Math.round((total / ((arr - dep) / 3_600_000)) || TYPICAL_KT),
-        track: bearingDeg(lat, lon, d.lat, d.lon),
-        silentSec: heard ? Math.round((now - heard.at) / 1000) : -1,
-        method: 'schedule',
-        lastSeenSource: k.status.source === 'flightaware' ? 'FlightAware schedule' : 'Flyby estimate',
-        origin: o as RouteInfo['origin'],
-        destination: d as RouteInfo['destination'],
-        flightNumber: k.status.identIata ?? null,
-        airline: null,
-        etaMinutes: Math.round((arr - now) / 60_000),
-      });
-    }
-
-    // Fourth source: FlightAware's own positions for receiver-less areas (incl. overflights).
+    // Third source (preferred over schedule maths — these are real positions): FlightAware's own positions for receiver-less areas (incl. overflights).
     for (const f of this.gapAreaFlights(b, now)) {
       if (!f.callsign || out.some((e) => e.callsign === f.callsign)) continue;
       const heard = this.sightings.sighting(f.callsign);
@@ -246,6 +209,51 @@ export class EstimatesService {
         flightNumber: f.identIata,
         airline: null,
         etaMinutes: d && f.gs ? Math.round((distanceNm(lat, lon, d.lat, d.lon) / Math.max(250, f.gs)) * 60 + 8) : null,
+      });
+    }
+
+    // Fourth source: airborne flights whose schedule/status was looked up (search, panels, watch list).
+    for (const k of this.status.knownAirborne()) {
+      if (out.some((e) => e.callsign === k.callsign)) continue;
+      const heard = this.sightings.sighting(k.callsign);
+      if (heard && now - heard.at < MIN_SILENT_MS) continue; // live right now
+      const t = k.status.times;
+      const dep = Date.parse(t.actualOff ?? t.actualOut ?? t.estimatedOff ?? t.scheduledOff ?? '');
+      const arr = Date.parse(t.estimatedOn ?? t.scheduledOn ?? t.estimatedIn ?? t.scheduledIn ?? '');
+      const o = k.route.origin!;
+      const d = k.route.destination!;
+      if (!Number.isFinite(dep) || !Number.isFinite(arr) || arr <= dep || now < dep || now >= arr) continue;
+      const f = (now - dep) / (arr - dep);
+      // A recent real position (FlightAware) beats interpolating along the route by time.
+      const lp = k.status.lastPosition;
+      const lpAge = lp ? now - Date.parse(lp.at) : Infinity;
+      const [lat, lon] =
+        lp && lpAge < 15 * 60_000
+          ? lp.heading !== null && lp.gs
+            ? destinationPoint(lp.lat, lp.lon, lp.heading, (lp.gs * Math.min(lpAge, 10 * 60_000)) / 3_600_000)
+            : [lp.lat, lp.lon]
+          : along(o.lat, o.lon, d.lat, d.lon, f);
+      if (!inside(lat, lon, b)) continue;
+      const total = distanceNm(o.lat, o.lon, d.lat, d.lon);
+      const left = total * (1 - f);
+      out.push({
+        hex: k.status.hex ?? heard?.hex ?? `cs-${k.callsign}`,
+        callsign: k.callsign,
+        reg: k.status.registration ?? heard?.reg ?? null,
+        type: k.status.aircraftType ?? heard?.type ?? null,
+        lat,
+        lon,
+        alt: left < 120 ? Math.round(Math.max(3_000, left * 300) / 100) * 100 : heard?.alt ?? 35_000,
+        gs: Math.round((total / ((arr - dep) / 3_600_000)) || TYPICAL_KT),
+        track: bearingDeg(lat, lon, d.lat, d.lon),
+        silentSec: heard ? Math.round((now - heard.at) / 1000) : -1,
+        method: 'schedule',
+        lastSeenSource: k.status.source === 'flightaware' ? 'FlightAware schedule' : 'Flyby estimate',
+        origin: o as RouteInfo['origin'],
+        destination: d as RouteInfo['destination'],
+        flightNumber: k.status.identIata ?? null,
+        airline: null,
+        etaMinutes: Math.round((arr - now) / 60_000),
       });
     }
 

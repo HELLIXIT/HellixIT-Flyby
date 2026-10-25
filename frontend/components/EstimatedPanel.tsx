@@ -1,7 +1,7 @@
 'use client';
 
 import type { EstimatedPosition } from '@/lib/flight';
-import { airportCode, airportLabel, fmtDuration } from '@/lib/flight';
+import { UPDATE_TYPE, airportCode, airportLabel, fmtDuration } from '@/lib/flight';
 import type { KnownFlight } from '@/lib/types';
 import StatusCard from './StatusCard';
 
@@ -47,14 +47,26 @@ export default function EstimatedPanel({ flight, estimate, statusEnabled, watche
       </header>
 
       <div className="notice">
+        {estimate?.basis === 'position' && estimate.updateType && 'AMZSX'.includes(estimate.updateType) ? (
+          <>
+            📡 <b>Live via FlightAware.</b> The free networks can’t hear this aircraft, but FlightAware’s receivers can — position by{' '}
+            {UPDATE_TYPE[estimate.updateType]}, {estimate.ageSec! < 60 ? `${estimate.ageSec}s` : `${Math.round(estimate.ageSec! / 60)} min`} ago (refreshed about every
+            90 s).
+          </>
+        ) : (
+          <>
         📡 <b>No live signal.</b>{' '}
-        {estimate
+        {estimate?.basis === 'position'
+          ? `FlightAware’s last position (${UPDATE_TYPE[estimate.updateType ?? ''] ?? 'estimate'}, ${Math.round((estimate.ageSec ?? 0) / 60)} min ago), moved forward along its heading.`
+          : estimate
           ? status?.source === 'estimate'
             ? 'No receiver can hear this aircraft right now. The dashed plane on the map is Flyby’s estimate, worked out from the last time a receiver saw it. It switches to the real position as soon as a receiver picks it up.'
             : 'No receiver can hear this aircraft right now, so the dashed plane on the map is an estimate from its takeoff and arrival times. It switches to the real position as soon as a receiver picks it up.'
           : status?.phase === 'scheduled'
             ? 'It hasn’t departed yet. It will appear live once it takes off within range of a receiver.'
             : 'No free receiver network can hear this flight right now. That’s common over oceans and remote regions.'}
+          </>
+        )}
       </div>
 
       <section className="card route">
@@ -63,7 +75,7 @@ export default function EstimatedPanel({ flight, estimate, statusEnabled, watche
             <span className="code-big">{airportCode(route.origin)}</span>
             <span className="muted">{airportLabel(route.origin)}</span>
           </button>
-          <div className="route-mid muted small">{estimate ? `~${fmtDuration(estimate.minutesToGo)} to go` : ''}</div>
+          <div className="route-mid muted small">{estimate ? `~${fmtDuration(estimate.minutesToGo)} to landing` : ''}</div>
           <button className="route-end right" onClick={() => onAirport(airportCode(route.destination))}>
             <span className="code-big">{airportCode(route.destination)}</span>
             <span className="muted">{airportLabel(route.destination)}</span>

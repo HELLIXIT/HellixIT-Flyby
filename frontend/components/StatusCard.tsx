@@ -13,11 +13,19 @@ const PHASE: Record<FlightStatus['phase'], [string, string]> = {
   diverted: ['↪️', 'Diverted'],
 };
 
+/** "On time" only within ±5 min — so the label never contradicts the times shown next to it. */
 function delayText(min: number | null) {
   if (min === null) return null;
   if (min <= -5) return { text: `${fmtDuration(-min)} early`, tone: 'good' };
-  if (min < 15) return { text: 'On time', tone: 'good' };
-  return { text: `${fmtDuration(min)} late`, tone: min >= 45 ? 'bad' : 'warn' };
+  if (min < 5) return { text: 'On time', tone: 'good' };
+  return { text: `${fmtDuration(min)} late`, tone: min >= 45 ? 'bad' : min >= 15 ? 'warn' : 'mild' };
+}
+
+/** Minutes between the time shown and its scheduled counterpart (same kind: gate vs gate). */
+function diffMin(shown: string | null | undefined, scheduled: string | null | undefined) {
+  const a = Date.parse(shown ?? '');
+  const b = Date.parse(scheduled ?? '');
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.round((a - b) / 60_000) : null;
 }
 
 /** Departure/arrival times, delays and gates from the schedule source (FlightAware). */
@@ -28,19 +36,36 @@ export default function StatusCard({ s, compact = false }: { s: FlightStatus; co
   const depTz = s.origin?.timezone;
   const arrTz = s.destination?.timezone;
 
-  // Gate times (out/in) are what passengers see; runway times (off/on) are the fallback.
-  const depActual = t.actualOut ?? t.actualOff;
-  const depLabel = est ? 'Took off ~' : depActual ? 'Departed' : 'Departs';
-  const depTime = fmtLocal(depActual ?? t.estimatedOut ?? t.estimatedOff ?? t.scheduledOut ?? t.scheduledOff, depTz);
-  const depSched = fmtLocal(t.scheduledOut ?? t.scheduledOff, depTz);
+  // Gate times (pushback / at the gate) are what passengers and airlines use; runway times
+  // (take-off / landing) are only a fallback. Delays are computed from the times shown.
+  const depGate = t.actualOut ?? t.estimatedOut ?? t.scheduledOut;
+  const depIso = est ? t.actualOff : depGate ?? t.actualOff ?? t.estimatedOff ?? t.scheduledOff;
+  const depIsGate = !est && !!depGate;
+  const depLabel = est ? 'Took off ~' : t.actualOut || t.actualOff ? (depIsGate ? 'Left gate' : 'Took off') : 'Departs';
+  const depTime = fmtLocal(depIso, depTz);
+  const depSchedIso = depIsGate ? t.scheduledOut : t.scheduledOff ?? t.scheduledOut;
+  const depSched = fmtLocal(depSchedIso, depTz);
 
-  const arrActual = t.actualIn ?? t.actualOn;
-  const arrLabel = est ? (arrActual ? 'Landed ~' : 'Lands ~') : arrActual ? 'Arrived' : 'Arrives';
-  const arrTime = fmtLocal(arrActual ?? t.estimatedIn ?? t.estimatedOn ?? t.scheduledIn ?? t.scheduledOn, arrTz);
-  const arrSched = fmtLocal(t.scheduledIn ?? t.scheduledOn, arrTz);
+  const arrGate = t.actualIn ?? t.estimatedIn ?? t.scheduledIn;
+  const arrIso = est ? t.actualOn ?? t.estimatedOn : arrGate ?? t.actualOn ?? t.estimatedOn ?? t.scheduledOn;
+  const arrIsGate = !est && !!arrGate;
+  const arrLabel = est
+    ? t.actualOn
+      ? 'Landed ~'
+      : 'Lands ~'
+    : t.actualIn || t.actualOn
+      ? arrIsGate
+        ? 'At gate'
+        : 'Landed'
+      : arrIsGate
+        ? 'At gate (est.)'
+        : 'Lands (est.)';
+  const arrTime = fmtLocal(arrIso, arrTz);
+  const arrSchedIso = arrIsGate ? t.scheduledIn : t.scheduledOn ?? t.scheduledIn;
+  const arrSched = fmtLocal(arrSchedIso, arrTz);
 
-  const depDelay = delayText(s.departureDelayMin);
-  const arrDelay = delayText(s.arrivalDelayMin);
+  const depDelay = delayText(diffMin(depIso, depSchedIso) ?? s.departureDelayMin);
+  const arrDelay = delayText(diffMin(arrIso, arrSchedIso) ?? s.arrivalDelayMin);
 
   return (
     <div className={`fa-status ${compact ? 'compact' : ''}`}>

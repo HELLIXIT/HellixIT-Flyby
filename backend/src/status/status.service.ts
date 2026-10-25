@@ -33,6 +33,8 @@ export interface GroundFlight {
 
 /** Area searches (airborne flights FlightAware places in a box) for receiver-less areas. */
 const AREA_CAP = Number(process.env.AEROAPI_AREA_CALLS_PER_DAY ?? 24);
+/** Live position lookups for flights opened in the estimated-flight panel. */
+const POSITION_CAP = Number(process.env.AEROAPI_POSITION_CALLS_PER_DAY ?? 60);
 const AREA_REFRESH_MS = Number(process.env.AEROAPI_AREA_REFRESH_MIN ?? 10) * 60_000;
 
 /** A flight FlightAware positions inside a searched area. */
@@ -109,6 +111,19 @@ export interface FlightStatus {
     actualIn: string | null;
   };
   fetchedAt: string;
+  /** FlightAware's internal flight id (needed for position lookups). */
+  faFlightId?: string | null;
+  /** FlightAware's latest position for this flight (their receivers/satellite/projection). */
+  lastPosition?: {
+    lat: number;
+    lon: number;
+    alt: number | null;
+    gs: number | null;
+    heading: number | null;
+    at: string;
+    /** A=ADS-B, M=MLAT, Z=radar, S=satellite, O=oceanic, D=datalink, P=projected, X=surface */
+    updateType: string | null;
+  } | null;
 }
 
 /**
@@ -152,7 +167,11 @@ export class StatusService {
   async status(callsign: string, route?: RoutePoints | null): Promise<FlightStatus | null> {
     const cs = callsign.toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (cs.length < 3) return null;
-    const fa = await this.flightAware(cs);
+    let fa = await this.flightAware(cs);
+    if (fa?.phase === 'airborne' && fa.faFlightId) {
+      const pos = await this.position(fa.faFlightId);
+      if (pos) fa = { ...fa, lastPosition: pos };
+    }
     const result = fa ?? (route ? this.estimate(cs, route) : null);
     this.remember(cs, result, route ?? null);
     return result;
@@ -275,6 +294,39 @@ export class StatusService {
       return await this.http.cached(`fa:${cs}`, 5 * 60_000, () => this.chain.run(cs), 6 * 3600_000);
     } catch (err) {
       this.logger.warn(`status ${cs}: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  private posDay = '';
+  private posCalls = 0;
+
+  /** FlightAware's latest position for an airborne flight (cached 90 s, own daily cap). */
+  private async position(faFlightId: string): Promise<FlightStatus['lastPosition']> {
+    try {
+      return await this.http.cached(
+        `fa-pos:${faFlightId}`,
+        90_000,
+        async () => {
+          const today = new Date().toISOString().slice(0, 10);
+          if (today !== this.posDay) {
+            this.posDay = today;
+            this.posCalls = 0;
+          }
+          if (this.posCalls >= POSITION_CAP) return null;
+          this.posCalls++;
+          const res = await fetch(`${AEROAPI}/flights/${encodeURIComponent(faFlightId)}/position`, {
+            headers: { 'x-apikey': this.key!, Accept: 'application/json' },
+            signal: AbortSignal.timeout(12_000),
+          });
+          if (!res.ok) throw new UpstreamError(`${res.status} from aeroapi (position)`, res.status);
+          const d = (await res.json()) as { last_position?: any };
+          return toPosition(d.last_position);
+        },
+        5 * 60_000,
+      );
+    } catch (err) {
+      this.logger.warn(`position ${faFlightId}: ${(err as Error).message}`);
       return null;
     }
   }
@@ -491,6 +543,8 @@ export class StatusService {
       refreshMinutes: BOARD_REFRESH_MS / 60_000,
       areaSearchesToday: this.areaCalls,
       areaDailyCap: AREA_CAP,
+      positionsToday: this.posCalls,
+      positionDailyCap: POSITION_CAP,
       groundListsToday: this.groundCalls,
       groundDailyCap: GROUND_CAP,
     };
@@ -573,6 +627,8 @@ function normalise(f: any): FlightStatus {
   return {
     source: 'flightaware',
     hex: null,
+    faFlightId: f.fa_flight_id ?? null,
+    lastPosition: toPosition(f.last_position),
     ident: f.ident_icao ?? f.ident,
     identIata: f.ident_iata ?? null,
     status: f.status ?? '',
@@ -612,4 +668,17 @@ function normalise(f: any): FlightStatus {
 function ago(ms: number) {
   const m = Math.max(0, Math.round(ms / 60_000));
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
+}
+
+function toPosition(p: any): FlightStatus['lastPosition'] {
+  if (!p || typeof p.latitude !== 'number') return null;
+  return {
+    lat: p.latitude,
+    lon: p.longitude,
+    alt: typeof p.altitude === 'number' ? p.altitude * 100 : null,
+    gs: p.groundspeed ?? null,
+    heading: p.heading ?? null,
+    at: p.timestamp ?? new Date().toISOString(),
+    updateType: p.update_type ?? null,
+  };
 }
