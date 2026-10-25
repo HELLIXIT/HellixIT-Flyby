@@ -1508,3 +1508,13 @@ input[type='range'] {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
 }
+
+.voice-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 8px;
+}
+.voice-picker .btn {
+  align-self: flex-start;
+}

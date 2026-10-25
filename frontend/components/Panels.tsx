@@ -1,6 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import {
+  KOKORO_VOICES,
+  getKokoroStatus,
+  onKokoroStatus,
+  onVoicesChanged,
+  preloadKokoro,
+  rankedDeviceVoices,
+  voiceScore,
+  type KokoroStatus,
+} from '@/lib/tts/speaker';
 import type { Aircraft, Filters, Settings, Units, WatchItem } from '@/lib/types';
 import { PHASE_EMOJI, PHASE_LABEL, altColor, fmtAlt, fmtSpeed, phaseOf } from '@/lib/flight';
 
@@ -215,6 +225,7 @@ export function SettingsPanel(p: {
   onChange: (s: Settings) => void;
   onEnableNotifications: () => void;
   onToggleVoice: () => void;
+  onTestVoice: () => void;
   onClose: () => void;
 }) {
   const s = p.settings;
@@ -290,6 +301,7 @@ export function SettingsPanel(p: {
           </span>
           <input type="checkbox" checked={s.voice} onChange={p.onToggleVoice} />
         </label>
+        <VoicePicker settings={s} onChange={(patch) => set(patch)} onTest={p.onTestVoice} />
         <label className="toggle-row">
           <span>Browser alerts for My Flights</span>
           <input type="checkbox" checked={s.notifications} onChange={(e) => (e.target.checked ? p.onEnableNotifications() : set({ notifications: false }))} />
@@ -341,6 +353,87 @@ export function SettingsPanel(p: {
           Live positions from the community ADS-B networks adsb.lol, adsb.fi and OpenSky; routes & aircraft from adsbdb and hexdb; photos from Planespotters; weather from Open-Meteo, MET Norway and aviationweather.gov; airports from OurAirports. If one source goes down we switch to the next one on its own.
         </p>
       </section>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- voice picker
+
+function VoicePicker({ settings, onChange, onTest }: { settings: Settings; onChange: (p: Partial<Settings>) => void; onTest: () => void }) {
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [kstatus, setKstatus] = useState<KokoroStatus>(getKokoroStatus());
+
+  useEffect(() => {
+    const load = () => setVoices(rankedDeviceVoices());
+    load();
+    const off = onVoicesChanged(load);
+    const off2 = onKokoroStatus(setKstatus);
+    return () => {
+      off();
+      off2();
+    };
+  }, []);
+
+  const best = voices[0];
+  const goodDevice = !!best && voiceScore(best) >= 60;
+
+  return (
+    <div className="voice-picker">
+      <div className="seg" role="radiogroup" aria-label="Voice engine">
+        <button className={settings.voiceEngine === 'device' ? 'active' : ''} onClick={() => onChange({ voiceEngine: 'device' })}>
+          Device voice
+        </button>
+        <button
+          className={settings.voiceEngine === 'kokoro' ? 'active' : ''}
+          onClick={() => {
+            onChange({ voiceEngine: 'kokoro' });
+            preloadKokoro();
+          }}
+        >
+          Natural AI voice
+        </button>
+      </div>
+
+      {settings.voiceEngine === 'device' ? (
+        <>
+          <select className="input" value={settings.deviceVoice ?? ''} onChange={(e) => onChange({ deviceVoice: e.target.value || null })}>
+            <option value="">Best available{best ? ` (${best.name})` : ''}</option>
+            {voices.map((v, i) => (
+              <option key={v.name} value={v.name}>
+                {i < 3 && voiceScore(v) >= 60 ? '★ ' : ''}
+                {v.name} — {v.lang}
+              </option>
+            ))}
+          </select>
+          <p className="small muted">
+            {goodDevice
+              ? '★ = most natural voices on this device.'
+              : 'This device has no natural-sounding voices. Try the Natural AI voice, or Microsoft Edge (Natural voices) / Chrome (Google voices). On a Mac or iPhone you can download Siri-quality voices in Settings → Accessibility → Spoken Content.'}
+          </p>
+        </>
+      ) : (
+        <>
+          <select className="input" value={settings.kokoroVoice} onChange={(e) => onChange({ kokoroVoice: e.target.value })}>
+            {KOKORO_VOICES.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.label}
+              </option>
+            ))}
+          </select>
+          <p className="small muted">
+            {kstatus.state === 'loading'
+              ? `Downloading the voice model… ${kstatus.progress ?? 0}% (about 90 MB, only once)`
+              : kstatus.state === 'ready'
+                ? 'Ready — runs entirely in your browser (Kokoro, open source). No data leaves your device.'
+                : kstatus.state === 'error'
+                  ? `Couldn’t load the AI voice (${kstatus.message ?? 'error'}) — using the device voice instead.`
+                  : 'Open-source neural voice (Kokoro) that runs in your browser. Downloads ~90 MB once; works offline afterwards.'}
+          </p>
+        </>
+      )}
+      <button className="btn small" onClick={onTest}>
+        ▶ Test voice
+      </button>
     </div>
   );
 }

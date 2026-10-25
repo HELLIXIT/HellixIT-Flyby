@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Aircraft, EstimatedAircraft, Units } from './types';
 import { bearing, compassWords, distanceNm } from './flight';
+import { speak, stopSpeaking, ttsSupported, unlockAudio, type VoiceChoice } from './tts/speaker';
 
 /** One aircraft as the radar sees it. */
 export interface RadarTarget {
@@ -103,19 +104,19 @@ export function useRadarVoice(opts: {
   targets: RadarTarget[];
   /** Bumped whenever new radar data arrives. */
   version: number;
+  /** Which voice to speak with. */
+  choice: VoiceChoice;
 }) {
-  const { enabled, active, location, radiusNm, units, targets, version } = opts;
+  const { enabled, active, location, radiusNm, units, targets, version, choice } = opts;
   const state = useRef(new Map<string, TrackState>());
   const queue = useRef<Pending[]>([]);
   const speaking = useRef(false);
   const primed = useRef(false);
   const [caption, setCaption] = useState<string | null>(null);
-  const supported = typeof window !== 'undefined' && 'speechSynthesis' in window;
+  const supported = ttsSupported();
 
-  // Chrome garbage-collects utterances that nothing references, and then never fires onend —
-  // which would stall our queue after the first message. Keep a reference + a watchdog.
-  const current = useRef<SpeechSynthesisUtterance | null>(null);
-  const watchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const choiceRef = useRef(choice);
+  choiceRef.current = choice;
 
   const pump = useCallback(() => {
     if (!supported || speaking.current) return;
@@ -123,29 +124,12 @@ export function useRadarVoice(opts: {
     queue.current = queue.current.filter((p) => now - p.at < (p.priority >= 3 ? STALE_IMPORTANT_MS : STALE_MS));
     const next = queue.current.shift();
     if (!next) return;
-    const u = new SpeechSynthesisUtterance(next.text);
-    const voices = window.speechSynthesis.getVoices();
-    const voice =
-      voices.find((v) => /^en(-|_)/i.test(v.lang) && /natural|google|samantha|daniel|serena/i.test(v.name)) ?? voices.find((v) => /^en(-|_)/i.test(v.lang));
-    if (voice) u.voice = voice;
-    u.rate = 1.02;
     speaking.current = true;
-    current.current = u;
     setCaption(next.text);
-    let finished = false;
-    const done = () => {
-      if (finished) return;
-      finished = true;
-      if (watchdog.current) clearTimeout(watchdog.current);
-      current.current = null;
+    void speak(next.text, choiceRef.current).finally(() => {
       speaking.current = false;
       pump();
-    };
-    u.onend = done;
-    u.onerror = done;
-    // ~80 ms per character is slow speech; if onend still hasn't fired by then, move on.
-    watchdog.current = setTimeout(done, 3_000 + next.text.length * 80);
-    window.speechSynthesis.speak(u);
+    });
   }, [supported]);
 
   const say = useCallback(
@@ -166,9 +150,7 @@ export function useRadarVoice(opts: {
     state.current.clear();
     queue.current = [];
     primed.current = false;
-    if (supported) window.speechSynthesis.cancel();
-    if (watchdog.current) clearTimeout(watchdog.current);
-    current.current = null;
+    stopSpeaking();
     speaking.current = false;
   }, [enabled, active, supported]);
 
@@ -285,7 +267,8 @@ export function useRadarVoice(opts: {
   const announce = useCallback(
     (text: string) => {
       if (!supported) return;
-      window.speechSynthesis.cancel();
+      unlockAudio(); // called from a click → allows audio playback from now on
+      stopSpeaking();
       speaking.current = false;
       queue.current = [];
       say(text, 5);

@@ -12,6 +12,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "kokoro-js": "^1.2.1",
     "leaflet": "1.9",
     "next": "^16.4.3",
     "react": "^19.3.1",

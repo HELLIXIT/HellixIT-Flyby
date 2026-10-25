@@ -206,6 +206,11 @@ export interface EstimatedAircraft {
 export interface Settings {
   /** Spoken radar announcements in "Above me" (off by default). */
   voice: boolean;
+  /** 'device' = best/selected system voice; 'kokoro' = neural voice running in the browser. */
+  voiceEngine: 'device' | 'kokoro';
+  /** Selected device voice name (null = best available). */
+  deviceVoice: string | null;
+  kokoroVoice: string;
   /** Show estimated positions for flights that recently left receiver coverage. */
   showEstimated: boolean;
   units: Units;

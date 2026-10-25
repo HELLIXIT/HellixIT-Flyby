@@ -25,6 +25,9 @@ const DEFAULT_SETTINGS: Settings = {
   showTrails: true,
   showEstimated: true,
   voice: false,
+  voiceEngine: 'device',
+  deviceVoice: null,
+  kokoroVoice: 'af_heart',
   showAirports: true,
   notifications: false,
 };
@@ -757,6 +760,7 @@ export default function FlybyApp() {
     units: settings.units,
     targets: radarTargets,
     version: radarVersion,
+    choice: { engine: settings.voiceEngine, deviceVoice: settings.deviceVoice, kokoroVoice: settings.kokoroVoice },
   });
 
   const toggleVoice = useCallback(() => {
@@ -1111,6 +1115,7 @@ export default function FlybyApp() {
               onChange={setSettings}
               onEnableNotifications={enableNotifications}
               onToggleVoice={toggleVoice}
+              onTestVoice={() => voice.announce('A B Y 5 8 7 entering radar, 40 kilometres north-west, 11 thousand metres, heading south-east.')}
               onClose={() => setPanel(null)}
             />
           )}
