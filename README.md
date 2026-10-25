@@ -99,6 +99,7 @@ Every setting lives in one file, [.env.example](.env.example). Copy it to `.env`
 | `AEROAPI_BOARD_CALLS_PER_DAY` / `AEROAPI_BOARD_REFRESH_MIN` | `24` / `60` | Departure boards for major airports without receiver coverage (e.g. Colombo) feed the estimated layer; separate daily cap, only fetched while the area is viewed |
 | `AEROAPI_AREA_CALLS_PER_DAY` / `AEROAPI_AREA_REFRESH_MIN` | `24` / `10` | FlightAware area search for viewports the free networks barely cover (shows overflights etc.); separate daily cap |
 | `AEROAPI_GROUND_CALLS_PER_DAY` / `AEROAPI_GROUND_REFRESH_MIN` | `24` / `15` | "At the airport" tab (recently landed / departing soon, with gates), fetched only when opened |
+| `AEROAPI_VERIFY_CALLS_PER_DAY` | `120` | Background check of estimated planes against FlightAware: landed/cancelled/diverted ones are removed, airborne ones marked ✓ verified |
 | `AIRPLANES_LIVE_ENABLED` | `false` | Adds airplanes.live to the live-data chain. **Only set `true` after airplanes.live approves you**; otherwise they return 403 and the chain skips them anyway. |
 | `ADSB_PROVIDERS` | — | Explicit feed order, e.g. `adsbfi,adsblol,airplaneslive` |
 | `LIVE_CACHE_MS` | `5000` | How long live position responses are reused |
