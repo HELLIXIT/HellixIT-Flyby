@@ -206,6 +206,8 @@ export interface EstimatedAircraft {
   flightNumber: string | null;
   airline: string | null;
   etaMinutes: number | null;
+  /** Checked against FlightAware and confirmed still airborne. */
+  verified?: boolean;
 }
 
 export interface Settings {

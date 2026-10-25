@@ -441,7 +441,8 @@ const MapView = forwardRef<MapHandle, Props>(function MapView(props, ref) {
               : `No signal for ${mins} min (last heard by ${e.lastSeenSource})<br/>`) +
             (e.method !== 'heading' && e.destination
               ? `Moving along its route to ${e.destination.iata ?? e.destination.icao}${e.etaMinutes != null ? ` · lands in ~${e.etaMinutes} min` : ''}`
-              : 'Following its last heading (route unknown)'),
+              : 'Following its last heading (route unknown)') +
+            (e.verified ? '<br/>✓ FlightAware confirms it is still airborne' : ''),
           { direction: 'top', offset: [0, -10], className: 'ac-tip' },
         )
         .on('click', (ev) => {

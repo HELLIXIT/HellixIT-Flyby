@@ -35,6 +35,10 @@ export interface GroundFlight {
 const AREA_CAP = Number(process.env.AEROAPI_AREA_CALLS_PER_DAY ?? 24);
 /** Live position lookups for flights opened in the estimated-flight panel. */
 const POSITION_CAP = Number(process.env.AEROAPI_POSITION_CALLS_PER_DAY ?? 200);
+/** Background verification of estimated flights (landed? cancelled?). */
+const VERIFY_CAP = Number(process.env.AEROAPI_VERIFY_CALLS_PER_DAY ?? 120);
+
+type Budget = 'user' | 'verify';
 /** How long a FlightAware position is reused (starred flights refresh at most this often). */
 const POSITION_REFRESH_MS = Number(process.env.AEROAPI_POSITION_REFRESH_SEC ?? 120) * 1000;
 const AREA_REFRESH_MS = Number(process.env.AEROAPI_AREA_REFRESH_MIN ?? 10) * 60_000;
@@ -142,7 +146,7 @@ export class StatusService {
   private readonly dailyCap = Number(process.env.AEROAPI_MAX_CALLS_PER_DAY ?? 30);
   private day = '';
   private callsToday = 0;
-  readonly chain: ProviderChain<[string], FlightStatus | null>;
+  readonly chain: ProviderChain<[string, Budget], FlightStatus | null>;
 
   constructor(
     private readonly http: HttpCacheService,
@@ -151,7 +155,7 @@ export class StatusService {
   ) {
     this.chain = new ProviderChain(
       'flight-status',
-      [{ name: 'flightaware-aeroapi', minIntervalMs: 6_000, run: (cs: string) => this.aeroapi(cs) }],
+      [{ name: 'flightaware-aeroapi', minIntervalMs: 6_000, run: (cs: string, budget: Budget) => this.aeroapi(cs, budget) }],
       { threshold: 2, cooldownMs: 5 * 60_000, maxCooldownMs: 60 * 60_000 },
     );
   }
@@ -161,7 +165,14 @@ export class StatusService {
   }
 
   usage() {
-    return { enabled: this.enabled, callsToday: this.callsToday, dailyCap: this.dailyCap, boards: this.boardUsage() };
+    return {
+      enabled: this.enabled,
+      callsToday: this.callsToday,
+      dailyCap: this.dailyCap,
+      verificationsToday: this.verifyCalls,
+      verifyDailyCap: VERIFY_CAP,
+      boards: this.boardUsage(),
+    };
   }
 
   /**
@@ -291,7 +302,7 @@ export class StatusService {
     };
   }
 
-  private async flightAware(cs: string): Promise<FlightStatus | null> {
+  private async flightAware(cs: string, budget: Budget = 'user'): Promise<FlightStatus | null> {
     if (!this.key) return null;
     try {
       // 5 min for flights that are moving, longer otherwise; stale answers kept for 6 h if FA is unreachable.
@@ -305,11 +316,23 @@ export class StatusService {
         const age = Date.now() - Date.parse(hit.fetchedAt);
         if (Number.isFinite(arr) && arr - Date.now() < 25 * 60_000 && age > 60_000) this.http.invalidate(key);
       }
-      return await this.http.cached(key, 5 * 60_000, () => this.chain.run(cs), 6 * 3600_000);
+      return await this.http.cached(key, 5 * 60_000, () => this.chain.run(cs, budget), 6 * 3600_000);
     } catch (err) {
       this.logger.warn(`status ${cs}: ${(err as Error).message}`);
       return null;
     }
+  }
+
+  private verifyCalls = 0;
+
+  /**
+   * Background check of an estimated flight against FlightAware: is it still in the air, or has
+   * it landed / been cancelled / diverted? Shares the status cache (no cost if already known);
+   * uses its own daily budget. Returns null if unknown or out of budget.
+   */
+  async verify(cs: string): Promise<FlightStatus | null> {
+    if (!this.key) return null;
+    return this.flightAware(cs.toUpperCase().replace(/[^A-Z0-9]/g, ''), 'verify');
   }
 
   private posDay = '';
@@ -564,14 +587,20 @@ export class StatusService {
     };
   }
 
-  private async aeroapi(cs: string): Promise<FlightStatus | null> {
+  private async aeroapi(cs: string, budget: Budget = 'user'): Promise<FlightStatus | null> {
     const today = new Date().toISOString().slice(0, 10);
     if (today !== this.day) {
       this.day = today;
       this.callsToday = 0;
+      this.verifyCalls = 0;
     }
-    if (this.callsToday >= this.dailyCap) throw new Error('local rate-limit: daily AeroAPI budget reached');
-    this.callsToday++;
+    if (budget === 'verify') {
+      if (this.verifyCalls >= VERIFY_CAP) throw new Error('local rate-limit: daily verification budget reached');
+      this.verifyCalls++;
+    } else {
+      if (this.callsToday >= this.dailyCap) throw new Error('local rate-limit: daily AeroAPI budget reached');
+      this.callsToday++;
+    }
 
     const start = new Date(Date.now() - 36 * 3600_000).toISOString().slice(0, 19) + 'Z';
     const end = new Date(Date.now() + 30 * 3600_000).toISOString().slice(0, 19) + 'Z';

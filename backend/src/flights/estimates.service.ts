@@ -44,6 +44,8 @@ export interface EstimatedAircraft {
   airline: string | null;
   /** Minutes until estimated landing (route method only). */
   etaMinutes: number | null;
+  /** Checked against FlightAware and confirmed still airborne. */
+  verified?: boolean;
 }
 
 /**
@@ -62,6 +64,50 @@ export class EstimatesService {
     private readonly airports: AirportsService,
     private readonly status: StatusService,
   ) {}
+
+  /** FlightAware verdicts for estimated flights (landed/cancelled ones are removed). */
+  private readonly verdicts = new Map<string, { at: number; phase: string | null }>();
+  private readonly verifyQueue = new Map<string, number>(); // callsign → minutes to landing (priority)
+  private verifier: ReturnType<typeof setInterval> | null = null;
+
+  /** One FlightAware check every 8 s while the app is in use — soonest-landing flights first. */
+  private ensureVerifier() {
+    if (this.verifier || !this.status.enabled) return;
+    this.verifier = setInterval(async () => {
+      if (Date.now() - this.lastUsed > 10 * 60_000) {
+        clearInterval(this.verifier!);
+        this.verifier = null;
+        return;
+      }
+      const next = [...this.verifyQueue.entries()].sort((a, b) => a[1] - b[1])[0]?.[0];
+      if (!next) return;
+      this.verifyQueue.delete(next);
+      const st = await this.status.verify(next).catch(() => null);
+      this.verdicts.set(next, { at: Date.now(), phase: st?.phase ?? null });
+      if (this.verdicts.size > 5000) this.verdicts.clear();
+    }, 8_000);
+    this.verifier.unref?.();
+  }
+
+  /** Drop estimates FlightAware says have landed / were cancelled; queue unchecked ones. */
+  private applyVerification(list: EstimatedAircraft[], now: number): EstimatedAircraft[] {
+    if (!this.status.enabled) return list;
+    this.ensureVerifier();
+    return list.filter((e) => {
+      // FlightAware-based entries are already "the truth"; non-airline callsigns can't be looked up.
+      if (e.method === 'flightaware' || e.method === 'schedule' || !/^[A-Z]{3}\d/.test(e.callsign)) return true;
+      const v = this.verdicts.get(e.callsign);
+      // Near landing things change fast (re-check every 5 min); mid-flight every 20 min is enough.
+      const ttl = e.etaMinutes !== null && e.etaMinutes < 30 ? 5 * 60_000 : 20 * 60_000;
+      if (!v || now - v.at > ttl) {
+        this.verifyQueue.set(e.callsign, e.etaMinutes ?? 999);
+        return true;
+      }
+      if (v.phase && ['landed', 'arrived', 'cancelled', 'diverted'].includes(v.phase)) return false;
+      if (v.phase === 'airborne') e.verified = true;
+      return true;
+    });
+  }
 
   private lastUsed = 0;
   private resolver: ReturnType<typeof setInterval> | null = null;
@@ -260,7 +306,7 @@ export class EstimatesService {
     // Look up routes for the nearest unknown departures first; results land in the cache for the next poll.
     pending.sort((x, y) => x.dist - y.dist);
     for (const p of pending.slice(0, Math.max(0, ROUTE_LOOKUPS_PER_CALL - lookups))) void this.info.route(p.cs);
-    return out;
+    return this.applyVerification(out, now);
   }
 
   private fromDeparture(cs: string, hex: string, firstSeen: number, lastSeen: number, route: RouteInfo, now: number): EstimatedAircraft | null {
